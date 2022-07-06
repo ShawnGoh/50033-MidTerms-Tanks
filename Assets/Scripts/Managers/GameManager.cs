@@ -4,35 +4,87 @@ using System.Text;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-
+using TMPro;
 
 public class GameManager : MonoBehaviour
 {
-    public int m_NumRoundsToWin = 5;            
-    public float m_StartDelay = 3f;             
-    public float m_EndDelay = 3f;               
-    public CameraControl m_CameraControl;       
-    public Text m_MessageText;                  
+    public float m_StartDelay = 3f;
+    public float m_EndDelay = 3f;
+    public float level;
+    public CameraControl m_CameraControl;
+    public Text m_MessageText;
     public GameObject[] m_TankPrefabs;
-    public TankManager[] m_Tanks;               
+    public TankManager[] m_Tanks;
     public List<Transform> wayPointsForAI;
 
-    private int m_RoundNumber;                  
-    private WaitForSeconds m_StartWait;         
-    private WaitForSeconds m_EndWait;           
-    private TankManager m_RoundWinner;          
-    private TankManager m_GameWinner;           
+    public GameObject PauseScreen;
+    public BooleanVariable BoolVar;
+    public FloatVariable LevelScore;
+    public FloatVariable CurrentScore;
+    public GameConstants gameConstants;
+    public GameObject EndScreen;
+    public TMP_Text EndTitle;
+    public FloatVariable LevelCleared;
+    public AudioSource VictoryMusic;
+    public GameObject NextLevelButton;
+    public GameObject RetryButton;
+    public GameObject TutorialScreen;
+    public BooleanVariable TutorialCompleted;
 
+    private WaitForSeconds m_StartWait;
+    private WaitForSeconds m_EndWait;
+    private float starsToWin;
+
+    private void Awake()
+    {
+        if (TutorialCompleted.Value)
+        {
+            TutorialScreen.SetActive(false);
+        }
+        else
+        {
+            BoolVar.SetValue(true);
+        }
+    }
 
     private void Start()
     {
         m_StartWait = new WaitForSeconds(m_StartDelay);
         m_EndWait = new WaitForSeconds(m_EndDelay);
-
+        CurrentScore.SetValue(0);
         SpawnAllTanks();
         SetCameraTargets();
+        switch (level)
+        {
+            case 1:
+                starsToWin = gameConstants.level1TotalStars;
+                break;
+            case 2:
+                starsToWin = gameConstants.level2TotalStars;
+                break;
+            case 3:
+                starsToWin = gameConstants.level3TotalStars;
+                break;
+        }
 
         StartCoroutine(GameLoop());
+    }
+
+    private void Update()
+    {
+        if (BoolVar.Value)
+        {
+            if (TutorialCompleted.Value)
+            {
+                PauseScreen.SetActive(true);
+            }
+            Time.timeScale = 0.0f;
+
+        }
+        else
+        {
+            Time.timeScale = 1.0f;
+        }
     }
 
 
@@ -45,8 +97,8 @@ public class GameManager : MonoBehaviour
 
         for (int i = 1; i < m_Tanks.Length; i++)
         {
-            m_Tanks[i].m_Instance =
-                Instantiate(m_TankPrefabs[i], m_Tanks[i].m_SpawnPoint.position, m_Tanks[i].m_SpawnPoint.rotation) as GameObject;
+            Debug.Log(m_Tanks[i]);
+            m_Tanks[i].m_Instance = Instantiate(m_TankPrefabs[i], m_Tanks[i].m_SpawnPoint.position, m_Tanks[i].m_SpawnPoint.rotation) as GameObject;
             m_Tanks[i].m_PlayerNumber = i + 1;
             m_Tanks[i].SetupAI(wayPointsForAI);
         }
@@ -69,9 +121,6 @@ public class GameManager : MonoBehaviour
         yield return StartCoroutine(RoundStarting());
         yield return StartCoroutine(RoundPlaying());
         yield return StartCoroutine(RoundEnding());
-
-        if (m_GameWinner != null) SceneManager.LoadScene(0);
-        else StartCoroutine(GameLoop());
     }
 
 
@@ -82,8 +131,7 @@ public class GameManager : MonoBehaviour
 
         m_CameraControl.SetStartPositionAndSize();
 
-        m_RoundNumber++;
-        m_MessageText.text = $"ROUND {m_RoundNumber}";
+        m_MessageText.text = $"LEVEL {level}";
 
         yield return m_StartWait;
     }
@@ -95,83 +143,42 @@ public class GameManager : MonoBehaviour
 
         m_MessageText.text = string.Empty;
 
-        while (!OneTankLeft()) yield return null;
+        while (PlayerStatus() && CurrentScore.Value != starsToWin) yield return null;
     }
 
 
     private IEnumerator RoundEnding()
     {
         DisableTankControl();
+        m_MessageText.text = string.Empty;
+        string message = "You Died!";
+        if (PlayerStatus())
+        {
+            message = "Level " + level + " Cleared!";
+            VictoryMusic.PlayOneShot(VictoryMusic.clip);
+            if (LevelCleared.Value < 2)
+            {
+                LevelCleared.ApplyChange(1);
+            }
+        }
+        else
+        {
+            NextLevelButton.SetActive(false);
+            RetryButton.SetActive(true);
+        }
+        EndTitle.text = message;
+        LevelScore.SetValue(CurrentScore.Value);
 
-        m_RoundWinner = null;
-
-        m_RoundWinner = GetRoundWinner();
-        if (m_RoundWinner != null) m_RoundWinner.m_Wins++;
-
-        m_GameWinner = GetGameWinner();
-
-        string message = EndMessage();
-        m_MessageText.text = message;
+        EndScreen.SetActive(true);
 
         yield return m_EndWait;
     }
 
 
-    private bool OneTankLeft()
+    private bool PlayerStatus()
     {
-        int numTanksLeft = 0;
-
-        for (int i = 0; i < m_Tanks.Length; i++)
-        {
-            if (m_Tanks[i].m_Instance.activeSelf) numTanksLeft++;
-        }
-
-        return numTanksLeft <= 1;
+        return m_Tanks[0].m_Instance.activeSelf;
     }
-
-    private TankManager GetRoundWinner()
-    {
-        for (int i = 0; i < m_Tanks.Length; i++)
-        {
-            if (m_Tanks[i].m_Instance.activeSelf)
-                return m_Tanks[i];
-        }
-
-        return null;
-    }
-
-    private TankManager GetGameWinner()
-    {
-        for (int i = 0; i < m_Tanks.Length; i++)
-        {
-            if (m_Tanks[i].m_Wins == m_NumRoundsToWin)
-                return m_Tanks[i];
-        }
-
-        return null;
-    }
-
-
-    private string EndMessage()
-    {
-        var sb = new StringBuilder();
-
-        if (m_RoundWinner != null) sb.Append($"{m_RoundWinner.m_ColoredPlayerText} WINS THE ROUND!");
-        else sb.Append("DRAW!");
-
-        sb.Append("\n\n\n\n");
-
-        for (int i = 0; i < m_Tanks.Length; i++)
-        {
-            sb.AppendLine($"{m_Tanks[i].m_ColoredPlayerText}: {m_Tanks[i].m_Wins} WINS");
-        }
-
-        if (m_GameWinner != null)
-            sb.Append($"{m_GameWinner.m_ColoredPlayerText} WINS THE GAME!");
-
-        return sb.ToString();
-    }
-
 
     private void ResetAllTanks()
     {
@@ -188,5 +195,17 @@ public class GameManager : MonoBehaviour
     private void DisableTankControl()
     {
         for (int i = 0; i < m_Tanks.Length; i++) m_Tanks[i].DisableControl();
+    }
+
+    public void RetryLevel()
+    {
+        SceneManager.LoadScene($"Level{level}");
+    }
+
+    public void EndTutorial()
+    {
+        TutorialScreen.SetActive(false);
+        TutorialCompleted.SetValue(true);
+        BoolVar.SetValue(false);
     }
 }
